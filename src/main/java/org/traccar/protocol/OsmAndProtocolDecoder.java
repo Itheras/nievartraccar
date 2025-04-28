@@ -146,6 +146,10 @@ public class OsmAndProtocolDecoder extends BaseHttpProtocolDecoder {
                     case "charge":
                         position.set(Position.KEY_CHARGE, Boolean.parseBoolean(value));
                         break;
+                    case "motion":
+                        position.set(Position.KEY_MOTION, Boolean.parseBoolean(value) || "1".equals(value));
+                        break;
+
                     default:
                         try {
                             position.set(entry.getKey(), Double.parseDouble(value));
@@ -182,7 +186,8 @@ public class OsmAndProtocolDecoder extends BaseHttpProtocolDecoder {
                 response = command.getString(Command.KEY_DATA);
             }
             if (response != null) {
-                sendResponse(channel, HttpResponseStatus.OK, Unpooled.copiedBuffer(response, StandardCharsets.UTF_8));
+                sendResponse(channel, HttpResponseStatus.OK,
+                        Unpooled.copiedBuffer(response, StandardCharsets.UTF_8));
             } else {
                 sendResponse(channel, HttpResponseStatus.OK);
             }
