@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.traccar.protocol;
 
 import io.netty.buffer.Unpooled;
@@ -146,6 +147,8 @@ public class OsmAndProtocolDecoder extends BaseHttpProtocolDecoder {
                     case "charge":
                         position.set(Position.KEY_CHARGE, Boolean.parseBoolean(value));
                         break;
+
+                    // Added: Parsing 'motion' parameter as a boolean
                     case "motion":
                         position.set(Position.KEY_MOTION, Boolean.parseBoolean(value) || "1".equals(value));
                         break;
