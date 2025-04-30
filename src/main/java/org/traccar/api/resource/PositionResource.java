@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package org.traccar.api.resource;
 
 import org.traccar.api.BaseResource;
@@ -26,12 +27,13 @@ import org.traccar.reports.KmlExportProvider;
 import org.traccar.storage.StorageException;
 import org.traccar.storage.query.Columns;
 import org.traccar.storage.query.Condition;
+import org.traccar.storage.query.Order;
 import org.traccar.storage.query.Request;
 
 import jakarta.inject.Inject;
 import jakarta.ws.rs.Consumes;
-import jakarta.ws.rs.GET;
 import jakarta.ws.rs.DELETE;
+import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
@@ -43,8 +45,9 @@ import jakarta.ws.rs.core.StreamingOutput;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
-import java.util.List;
 import java.util.LinkedList;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Path("positions")
 @Produces(MediaType.APPLICATION_JSON)
@@ -62,30 +65,54 @@ public class PositionResource extends BaseResource {
 
     @GET
     public Collection<Position> getJson(
-            @QueryParam("deviceId") long deviceId, @QueryParam("id") List<Long> positionIds,
-            @QueryParam("from") Date from, @QueryParam("to") Date to)
+            @QueryParam("deviceId") List<Long> deviceIds,
+            @QueryParam("id") List<Long> positionIds,
+            @QueryParam("from") Date from,
+            @QueryParam("to") Date to)
             throws StorageException {
+
+        // 1) Positions by specific position IDs
         if (!positionIds.isEmpty()) {
             var positions = new ArrayList<Position>();
             for (long positionId : positionIds) {
                 Position position = storage.getObject(Position.class, new Request(
                         new Columns.All(), new Condition.Equals("id", positionId)));
+                // Ensure user permission for each position's device
                 permissionsService.checkPermission(Device.class, getUserId(), position.getDeviceId());
                 positions.add(position);
             }
             return positions;
-        } else if (deviceId > 0) {
-            permissionsService.checkPermission(Device.class, getUserId(), deviceId);
+        }
+
+        // 2) Positions by deviceId(s)
+        if (deviceIds != null && !deviceIds.isEmpty()) {
+            // Check permission on each requested device
+            for (Long deviceId : deviceIds) {
+                permissionsService.checkPermission(Device.class, getUserId(), deviceId);
+            }
+
+            // If from/to provided => positions for all specified devices in time range
             if (from != null && to != null) {
                 permissionsService.checkRestriction(getUserId(), UserRestrictions::getDisableReports);
-                return PositionUtil.getPositions(storage, deviceId, from, to);
-            } else {
                 return storage.getObjects(Position.class, new Request(
-                        new Columns.All(), new Condition.LatestPositions(deviceId)));
+                        new Columns.All(),
+                        new Condition.And(
+                                new Condition.In("deviceId", deviceIds),
+                                new Condition.Between("fixTime", "from", from, "to", to)
+                        ),
+                        new Order("fixTime")));
+            } else {
+                // No from/to => return the LATEST position for each specified device
+                var allLatest = storage.getObjects(Position.class, new Request(
+                        new Columns.All(), new Condition.LatestPositions()));
+                return allLatest.stream()
+                        .filter(position -> deviceIds.contains(position.getDeviceId()))
+                        .collect(Collectors.toList());
             }
-        } else {
-            return PositionUtil.getLatestPositions(storage, getUserId());
         }
+
+        // 3) Fallback to returning all latest positions if no deviceId & no positionIds
+        return PositionUtil.getLatestPositions(storage, getUserId());
     }
 
     @DELETE
