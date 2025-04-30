@@ -95,20 +95,28 @@ public class PositionResource extends BaseResource {
             if (from != null && to != null) {
                 permissionsService.checkRestriction(getUserId(), UserRestrictions::getDisableReports);
 
-                // Build an OR condition for multiple deviceIds: deviceId=1 OR deviceId=2 OR ...
-                var deviceConditions = new ArrayList<Condition>();
+                // Build an OR condition for multiple deviceIds:
+                Condition orConditionForDevices = null;
                 for (Long dId : deviceIds) {
-                    deviceConditions.add(new Condition.Equals("deviceId", dId));
+                    var eqCondition = new Condition.Equals("deviceId", dId);
+                    if (orConditionForDevices == null) {
+                        orConditionForDevices = eqCondition;
+                    } else {
+                        orConditionForDevices = new Condition.Or(orConditionForDevices, eqCondition);
+                    }
                 }
-                Condition devicesOrCondition = Condition.merge(deviceConditions, Condition.MergeOperator.OR);
+
+                // Combine the device condition with the time-range condition
+                Condition finalCondition = new Condition.And(
+                        orConditionForDevices,
+                        new Condition.Between("fixTime", "from", from, "to", to)
+                );
 
                 return storage.getObjects(Position.class, new Request(
                         new Columns.All(),
-                        new Condition.And(
-                                devicesOrCondition,
-                                new Condition.Between("fixTime", "from", from, "to", to)
-                        ),
+                        finalCondition,
                         new Order("fixTime")));
+
             } else {
                 // No from/to => return the LATEST position for each specified device
                 var allLatest = storage.getObjects(Position.class, new Request(
@@ -144,7 +152,8 @@ public class PositionResource extends BaseResource {
     @Produces("application/vnd.google-earth.kml+xml")
     public Response getKml(
             @QueryParam("deviceId") long deviceId,
-            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
+            @QueryParam("from") Date from,
+            @QueryParam("to") Date to) throws StorageException {
         permissionsService.checkPermission(Device.class, getUserId(), deviceId);
         StreamingOutput stream = output -> {
             try {
@@ -162,7 +171,8 @@ public class PositionResource extends BaseResource {
     @Produces("text/csv")
     public Response getCsv(
             @QueryParam("deviceId") long deviceId,
-            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
+            @QueryParam("from") Date from,
+            @QueryParam("to") Date to) throws StorageException {
         permissionsService.checkPermission(Device.class, getUserId(), deviceId);
         StreamingOutput stream = output -> {
             try {
@@ -180,7 +190,8 @@ public class PositionResource extends BaseResource {
     @Produces("application/gpx+xml")
     public Response getGpx(
             @QueryParam("deviceId") long deviceId,
-            @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
+            @QueryParam("from") Date from,
+            @QueryParam("to") Date to) throws StorageException {
         permissionsService.checkPermission(Device.class, getUserId(), deviceId);
         StreamingOutput stream = output -> {
             try {
