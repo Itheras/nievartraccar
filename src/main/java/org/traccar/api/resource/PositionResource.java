@@ -94,10 +94,18 @@ public class PositionResource extends BaseResource {
             // If from/to provided => positions for all specified devices in time range
             if (from != null && to != null) {
                 permissionsService.checkRestriction(getUserId(), UserRestrictions::getDisableReports);
+
+                // Build an OR condition for multiple deviceIds: deviceId=1 OR deviceId=2 OR ...
+                var deviceConditions = new ArrayList<Condition>();
+                for (Long dId : deviceIds) {
+                    deviceConditions.add(new Condition.Equals("deviceId", dId));
+                }
+                Condition devicesOrCondition = Condition.merge(deviceConditions, Condition.MergeOperator.OR);
+
                 return storage.getObjects(Position.class, new Request(
                         new Columns.All(),
                         new Condition.And(
-                                new Condition.In("deviceId", deviceIds),
+                                devicesOrCondition,
                                 new Condition.Between("fixTime", "from", from, "to", to)
                         ),
                         new Order("fixTime")));
@@ -119,6 +127,7 @@ public class PositionResource extends BaseResource {
     public Response remove(
             @QueryParam("deviceId") long deviceId,
             @QueryParam("from") Date from, @QueryParam("to") Date to) throws StorageException {
+
         permissionsService.checkPermission(Device.class, getUserId(), deviceId);
         permissionsService.checkRestriction(getUserId(), UserRestrictions::getReadonly);
 
@@ -183,5 +192,4 @@ public class PositionResource extends BaseResource {
         return Response.ok(stream)
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=positions.gpx").build();
     }
-
 }
