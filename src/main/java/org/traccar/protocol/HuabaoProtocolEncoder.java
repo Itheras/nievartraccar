@@ -50,16 +50,11 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
 
             switch (command.getType()) {
                 case Command.TYPE_CUSTOM:
-                    String model = getDeviceModel(command.getDeviceId());
-                    if (model != null && Set.of("AL300", "GL100", "VL300").contains(model)) {
-                        data.writeByte(1); // number of parameters
-                        data.writeInt(0xF030); // AT command transparent transmission
-                        int length = command.getString(Command.KEY_DATA).length();
-                        data.writeByte(length);
-                        data.writeCharSequence(command.getString(Command.KEY_DATA), StandardCharsets.US_ASCII);
-                        return HuabaoProtocolDecoder.formatMessage(
-                                0x7e, HuabaoProtocolDecoder.MSG_CONFIGURATION_PARAMETERS, id, false, data);
-                    } else if ("BSJ".equals(model)) {
+                    // Check if the device model is "gosafe"
+                    if ("gosafe".equals(getDeviceModel(command.getDeviceId()))) {
+                        // Send the data directly as raw
+                        return Unpooled.wrappedBuffer(DataConverter.parseHex(command.getString(Command.KEY_DATA)));
+                    } else if ("BSJ".equals(getDeviceModel(command.getDeviceId()))) {
                         data.writeByte(1); // flag
                         var charset = Charset.isSupported("GBK") ? Charset.forName("GBK") : StandardCharsets.US_ASCII;
                         data.writeCharSequence(command.getString(Command.KEY_DATA), charset);

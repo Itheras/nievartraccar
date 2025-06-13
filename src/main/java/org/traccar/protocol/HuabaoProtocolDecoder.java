@@ -109,7 +109,7 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
             ByteBuf response = Unpooled.buffer();
             response.writeShort(index);
             response.writeShort(type);
-            response.writeByte(RESULT_SUCCESS);
+            response.writeShort(RESULT_SUCCESS);
             channel.writeAndFlush(new NetworkMessage(
                     formatMessage(delimiter, MSG_GENERAL_RESPONSE, id, false, response), remoteAddress));
         }
@@ -423,10 +423,8 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
 
         String model = getDeviceModel(deviceSession);
 
-        position.set(Position.KEY_IGNITION, BitUtil.check(status, 0));
-        if ("G1C Pro".equals(model)) {
-            position.set(Position.KEY_MOTION, BitUtil.check(status, 4));
-        }
+        // position.set(Position.KEY_IGNITION, BitUtil.check(status, 0));
+        position.set(Position.KEY_MOTION, BitUtil.check(status, 4));
         position.set(Position.KEY_BLOCKED, BitUtil.check(status, 10));
         position.set(Position.KEY_CHARGE, BitUtil.check(status, 26));
 
