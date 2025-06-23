@@ -244,9 +244,9 @@ public class OsmAndProtocolDecoder extends BaseHttpProtocolDecoder {
 
         if (location.containsKey("coords")) {
             JsonObject coordinates = location.getJsonObject("coords");
+            position.setValid(true);
             position.setLatitude(coordinates.getJsonNumber("latitude").doubleValue());
             position.setLongitude(coordinates.getJsonNumber("longitude").doubleValue());
-            position.setAccuracy(coordinates.getJsonNumber("accuracy").doubleValue());
             double speed = coordinates.getJsonNumber("speed").doubleValue();
             if (speed >= 0) {
                 position.setSpeed(UnitsConverter.knotsFromMps(speed));
@@ -255,7 +255,12 @@ public class OsmAndProtocolDecoder extends BaseHttpProtocolDecoder {
             if (heading >= 0) {
                 position.setCourse(heading);
             }
+            if (speed >= 0 || heading >= 0) {
+                position.setAccuracy(coordinates.getJsonNumber("accuracy").doubleValue());
+            }
             position.setAltitude(coordinates.getJsonNumber("altitude").doubleValue());
+        } else {
+            getLastLocation(position, null);
         }
 
         if (location.containsKey("event")) {
