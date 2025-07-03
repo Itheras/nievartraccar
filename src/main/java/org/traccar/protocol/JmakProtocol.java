@@ -1,5 +1,5 @@
 /*
- * Copyright 2015 - 2025 Anton Tananaev (anton@traccar.org)
+ * Copyright 2025 Anton Tananaev (anton@traccar.org)
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,34 +15,26 @@
  */
 package org.traccar.protocol;
 
-import io.netty.handler.codec.http.HttpObjectAggregator;
-import io.netty.handler.codec.http.HttpRequestDecoder;
-import io.netty.handler.codec.http.HttpResponseEncoder;
 import org.traccar.BaseProtocol;
 import org.traccar.PipelineBuilder;
 import org.traccar.TrackerServer;
 import org.traccar.config.Config;
 
-import jakarta.inject.Inject;
-import org.traccar.model.Command;
+import io.netty.handler.codec.string.StringDecoder;
 
-public class OsmAndProtocol extends BaseProtocol {
+import jakarta.inject.Inject;
+
+public class JmakProtocol extends BaseProtocol {
 
     @Inject
-    public OsmAndProtocol(Config config) {
-        setSupportedPushCommands(
-                Command.TYPE_POSITION_SINGLE,
-                Command.TYPE_POSITION_PERIODIC,
-                Command.TYPE_POSITION_STOP);
+    public JmakProtocol(Config config) {
         addServer(new TrackerServer(config, getName(), false) {
             @Override
             protected void addProtocolHandlers(PipelineBuilder pipeline, Config config) {
-                pipeline.addLast(new HttpResponseEncoder());
-                pipeline.addLast(new HttpRequestDecoder());
-                pipeline.addLast(new HttpObjectAggregator(16384));
-                pipeline.addLast(new OsmAndProtocolDecoder(OsmAndProtocol.this));
+                pipeline.addLast(new JmakFrameDecoder());
+                pipeline.addLast(new StringDecoder());
+                pipeline.addLast(new JmakProtocolDecoder(JmakProtocol.this));
             }
         });
     }
-
 }
