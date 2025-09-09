@@ -205,6 +205,22 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
         }
     }
 
+    // Helper to parse decimal or hex numeric strings safely (used for 0x9F base-station info)
+    private static int parseFlexibleInt(String s) {
+        s = s.trim();
+        if (s.isEmpty()) return 0;
+        // If string has any a..f character, assume hex; else try decimal first
+        if (s.matches("(?i).*[a-f].*")) {
+            return (int) Long.parseLong(s, 16);
+        }
+        // Try decimal; if it overflows expected ranges, fall back to hex
+        try {
+            return Integer.parseInt(s, 10);
+        } catch (NumberFormatException ex) {
+            return (int) Long.parseLong(s, 16);
+        }
+    }
+
     @Override
     protected Object decode(
             Channel channel, SocketAddress remoteAddress, Object msg) throws Exception {
@@ -231,11 +247,22 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
         int type = buf.readUnsignedShort();
         int attribute = buf.readUnsignedShort();
         ByteBuf id = buf.readSlice(isAlternative() ? 7 : 6);
+
         int index;
         if (type == MSG_LOCATION_REPORT_2 || type == MSG_LOCATION_REPORT_BLIND) {
             index = buf.readUnsignedByte();
         } else {
             index = buf.readUnsignedShort();
+        }
+
+        // NEW: handle JT/T808 sub-packaging header item if present (bit 13)
+        // Spec: if bit13 == 1, message header is followed by 4 bytes: total packets (WORD), packet sequence (WORD).
+        // (Message Body Properties / Sub-packaging, spec pp. 3–5)
+        if (BitUtil.check(attribute, 13)) {
+            // total packets
+            buf.readUnsignedShort();
+            // current packet sequence
+            buf.readUnsignedShort();
         }
 
         DeviceSession deviceSession = getDeviceSession(channel, remoteAddress, decodeId(id));
@@ -522,6 +549,16 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
                 case 0x31:
                     position.set(Position.KEY_SATELLITES, buf.readUnsignedByte());
                     break;
+                // NEW for MiCODUS: per-GNSS satellite counts (optional)
+                case 0x32:
+                    position.set("gpsSatellites", buf.readUnsignedByte());
+                    break;
+                case 0x33:
+                    position.set("bdsSatellites", buf.readUnsignedByte());
+                    break;
+                case 0x34:
+                    position.set("gloSatellites", buf.readUnsignedByte());
+                    break;
                 case 0x33:
                     if (length == 1) {
                         position.set("mode", buf.readUnsignedByte());
@@ -552,11 +589,18 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
                     buf.readUnsignedByte(); // reserved
                     break;
                 case 0x57:
-                    int alarm = buf.readUnsignedShort();
-                    position.addAlarm(BitUtil.check(alarm, 8) ? Position.ALARM_ACCELERATION : null);
-                    position.addAlarm(BitUtil.check(alarm, 9) ? Position.ALARM_BRAKING : null);
-                    position.addAlarm(BitUtil.check(alarm, 10) ? Position.ALARM_CORNERING : null);
-                    buf.readUnsignedShort(); // external switch state
+                    // Backward-compatible: some vendors use alarm bits 8..10 for harsh events.
+                    // MiCODUS: bytes 0-1 alarm, 2-3 switch; set ignition from switch bit 8 (ACC ON) / bit 9 (ACC OFF).
+                    int alarmBits = buf.readUnsignedShort();
+                    int switchBits = buf.readUnsignedShort();
+                    // Heuristic ignition extraction; does not prevent older harsh-driving mapping below.
+                    if (BitUtil.check(switchBits, 8) || BitUtil.check(switchBits, 9)) {
+                        position.set(Position.KEY_IGNITION, BitUtil.check(switchBits, 8) && !BitUtil.check(switchBits, 9));
+                    }
+                    // Maintain existing support: treat alarm bits 8..10 as driving events where applicable.
+                    position.addAlarm(BitUtil.check(alarmBits, 8) ? Position.ALARM_ACCELERATION : null);
+                    position.addAlarm(BitUtil.check(alarmBits, 9) ? Position.ALARM_BRAKING : null);
+                    position.addAlarm(BitUtil.check(alarmBits, 10) ? Position.ALARM_CORNERING : null);
                     buf.skipBytes(4); // reserved
                     break;
                 case 0x60:
@@ -641,6 +685,19 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
                         position.set(Position.KEY_VIN, stringValue);
                     }
                     break;
+                case 0x9F:
+                    // MiCODUS base-station info: "MCC,MNC,LAC,CELLID,Signal"
+                    stringValue = buf.readCharSequence(length, StandardCharsets.US_ASCII).toString().trim();
+                    String[] bs = stringValue.split(",");
+                    if (bs.length >= 5) {
+                        int mcc = parseFlexibleInt(bs[0]);
+                        int mnc = parseFlexibleInt(bs[1]);
+                        int lac = parseFlexibleInt(bs[2]);
+                        long cid = parseFlexibleInt(bs[3]);
+                        int sig = parseFlexibleInt(bs[4]);
+                        network.addCellTower(CellTower.from(mcc, mnc, lac, cid, sig));
+                    }
+                    break;
                 case 0xAC:
                     position.set(Position.KEY_ODOMETER, buf.readUnsignedInt());
                     break;
@@ -652,11 +709,13 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
                     stringValue = buf.readCharSequence(length, StandardCharsets.US_ASCII).toString();
                     position.set(Position.KEY_DRIVER_UNIQUE_ID, stringValue);
                     break;
+                case 0xCC:
+                    // MiCODUS: ICCID, 20 ASCII chars
+                    stringValue = buf.readCharSequence(length, StandardCharsets.US_ASCII).toString();
+                    position.set(Position.KEY_ICCID, stringValue.trim());
+                    break;
                 case 0xD0:
-                    long userStatus = buf.readUnsignedInt();
-                    if (BitUtil.check(userStatus, 3)) {
-                        position.addAlarm(Position.ALARM_VIBRATION);
-                    }
+                    position.set(Position.KEY_POWER, buf.readUnsignedShort() * 0.1);
                     break;
                 case 0xD3:
                     position.set(Position.KEY_POWER, buf.readUnsignedShort() * 0.1);
@@ -943,6 +1002,15 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
                             }
                         }
                         position.set(Position.KEY_BATTERY_LEVEL, buf.readUnsignedByte());
+                    }
+                    break;
+                // NEW: MiCODUS 0x82 top-level additional item (external power, 0.1V)
+                case 0x82:
+                    if (length >= 2) {
+                        position.set(Position.KEY_POWER, buf.readUnsignedShort() * 0.1);
+                        if (length > 2) buf.skipBytes(length - 2);
+                    } else {
+                        buf.skipBytes(length);
                     }
                     break;
                 default:
