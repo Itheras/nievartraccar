@@ -65,6 +65,9 @@ public class Bit4MotionHandler extends BasePositionHandler {
         }
 
         boolean currentMotion = position.getBoolean(Position.KEY_MOTION);
+        boolean idle = !currentMotion;
+        position.set("idle", idle);
+        position.set("Idle", idle);
 
         // Retrieve Device from cache
         Device device = cacheManager.getObject(Device.class, deviceId);
