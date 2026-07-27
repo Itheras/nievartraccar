@@ -37,7 +37,7 @@ public class EngineHoursHandler extends BasePositionHandler {
                 long hours = last.getLong(Position.KEY_HOURS);
                 boolean lastIgnition = last.getBoolean(Position.KEY_IGNITION);
                 boolean currentIgnition = position.getBoolean(Position.KEY_IGNITION);
-                
+
                 if (lastIgnition && currentIgnition) {
                     hours += position.getDeviceTime().getTime() - last.getDeviceTime().getTime();
                 } else if (lastIgnition && !currentIgnition) {

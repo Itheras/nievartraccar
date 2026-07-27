@@ -102,7 +102,7 @@ public class Bit4MotionHandler extends BasePositionHandler {
                         } catch (Exception e) {
                             LOGGER.error("Failed to send Huabao command", e);
                         }
-                    }, delay, TimeUnit.SECONDS);    
+                    }, delay, TimeUnit.SECONDS);
                 }
             }
         }
