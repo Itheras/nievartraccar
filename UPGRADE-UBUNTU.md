@@ -35,13 +35,22 @@ git pull --ff-only origin master
 #   git fetch upstream master
 #   git merge upstream/master
 
-# web submodule: relative URL points at a fork that does not exist, override it
-git config submodule.traccar-web.url https://github.com/traccar/traccar-web.git
+# web submodule: relative URL points at a fork that does not exist, override it.
+# The override must go in .gitmodules BEFORE sync — `git submodule sync` copies
+# .gitmodules into .git/config and would otherwise wipe a plain `git config` override.
+git config -f .gitmodules submodule.traccar-web.url https://github.com/traccar/traccar-web.git
 git submodule sync --recursive
 git submodule update --init --recursive
+ls traccar-web/package.json          # must exist before npm ci
 
-./gradlew clean build --no-daemon --stacktrace
+# `build` runs tests + checkstyle, both of which currently FAIL on this fork's
+# master (AtrackProtocolDecoderTest.testDecodeBeacon, plus 7 checkstyle errors in
+# fork-modified files). `assemble` produces the jar and lib/ without them.
+./gradlew clean assemble --no-daemon --stacktrace
+ls -l target/tracker-server.jar      # must exist before deploying
+
 cd traccar-web && npm ci && npm run build && cd ~/src/traccar
+ls traccar-web/build/index.html      # must exist before deploying
 
 # stage the new install payload
 rm -rf ~/traccar-new ~/traccar-new.tar.gz
