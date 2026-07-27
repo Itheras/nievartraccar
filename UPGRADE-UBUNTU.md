@@ -9,6 +9,91 @@ top of upstream `traccar/traccar` — currently two commits to
 
 ---
 
+## Quick path — backup config, stop, swap install, restore config, start
+
+No database backup (the database is external; its credentials live in
+`conf/traccar.xml`, which is what gets preserved). The old install is renamed,
+not deleted, so `data/`, `media/` and `logs/` remain recoverable in
+`/opt/traccar.old-<stamp>`.
+
+```bash
+# ---------- BUILD (on the server or any Ubuntu box) ----------
+sudo apt update
+sudo apt install -y git unzip zip curl openjdk-21-jdk
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install -y nodejs
+
+mkdir -p ~/src && cd ~/src
+git clone https://github.com/Itheras/nievartraccar.git traccar || true
+cd ~/src/traccar
+git checkout master
+git pull --ff-only origin master
+
+# to take the newest UPSTREAM master instead, run these three lines as well
+# (expect a conflict in src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java):
+#   git remote add upstream https://github.com/traccar/traccar.git
+#   git fetch upstream master
+#   git merge upstream/master
+
+# web submodule: relative URL points at a fork that does not exist, override it
+git config submodule.traccar-web.url https://github.com/traccar/traccar-web.git
+git submodule sync --recursive
+git submodule update --init --recursive
+
+./gradlew clean build --no-daemon --stacktrace
+cd traccar-web && npm ci && npm run build && cd ~/src/traccar
+
+# stage the new install payload
+rm -rf ~/traccar-new ~/traccar-new.tar.gz
+mkdir -p ~/traccar-new/{lib,web,schema,templates}
+cp target/tracker-server.jar ~/traccar-new/
+cp target/lib/*             ~/traccar-new/lib/
+cp -r traccar-web/build/*   ~/traccar-new/web/
+cp schema/*                 ~/traccar-new/schema/
+cp -r templates/*           ~/traccar-new/templates/
+tar czf ~/traccar-new.tar.gz -C ~/traccar-new .
+
+# ---------- DEPLOY ----------
+STAMP=$(date +%Y%m%d-%H%M)
+
+# 1. back up the config
+sudo cp -a /opt/traccar/conf /root/traccar-conf-$STAMP
+sudo ls -la /root/traccar-conf-$STAMP
+
+# 2. stop traccar
+sudo systemctl stop traccar
+sudo systemctl is-active traccar          # expect: inactive
+
+# 3. put the new traccar in place
+sudo mv /opt/traccar /opt/traccar.old-$STAMP
+sudo mkdir -p /opt/traccar
+sudo tar xzf ~/traccar-new.tar.gz -C /opt/traccar
+sudo cp -a /opt/traccar.old-$STAMP/jre /opt/traccar/jre    # keep the bundled Java runtime
+sudo cp -a /opt/traccar.old-$STAMP/data /opt/traccar/data 2>/dev/null || true
+sudo cp -a /opt/traccar.old-$STAMP/media /opt/traccar/media 2>/dev/null || true
+sudo mkdir -p /opt/traccar/logs
+
+# 4. put the config back
+sudo rm -rf /opt/traccar/conf
+sudo cp -a /root/traccar-conf-$STAMP /opt/traccar/conf
+sudo chmod -R go+rX /opt/traccar
+sudo ls -la /opt/traccar /opt/traccar/conf
+
+# 5. start it back up
+sudo systemctl start traccar
+sudo systemctl status traccar --no-pager
+sudo journalctl -u traccar -n 80 --no-pager
+curl -fsS http://localhost:8082/api/health; echo
+curl -sS http://localhost:8082/api/server | head -c 300; echo
+
+# ---------- ROLLBACK if needed ----------
+# sudo systemctl stop traccar
+# sudo rm -rf /opt/traccar && sudo mv /opt/traccar.old-$STAMP /opt/traccar
+# sudo systemctl start traccar
+```
+
+---
+
 ## 0. What is preserved vs. replaced
 
 The systemd unit (`setup/traccar.service`) runs:
