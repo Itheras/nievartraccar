@@ -4,103 +4,149 @@ Runbook for updating an existing Traccar install with the newest code from
 `master`, **without touching any configuration, database, media or logs**.
 
 Written for this fork (`Itheras/nievartraccar`), which carries local changes on
-top of upstream `traccar/traccar` — currently two commits to
-`src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java`.
+top of upstream `traccar/traccar` — among them `HuabaoProtocolDecoder`,
+`HuabaoProtocolEncoder`, `AtrackProtocolDecoder`, `Bit4MotionHandler` and
+`EngineHoursHandler`.
 
 ---
 
-## Quick path — backup config, stop, swap install, restore config, start
+## The update script (verified 2026-07-27)
 
-No database backup (the database is external; its credentials live in
-`conf/traccar.xml`, which is what gets preserved). The old install is renamed,
-not deleted, so `data/`, `media/` and `logs/` remain recoverable in
-`/opt/traccar.old-<stamp>`.
+Backs up the config, builds, stops Traccar, swaps the install, restores the
+config, starts it back up. No database backup — the database is external and its
+credentials live in `conf/traccar.xml`, which is preserved.
+
+It runs as a script, not pasted commands, so `set -e` stops before `/opt/traccar`
+is touched if the build fails. That ordering matters: the failure mode we hit was
+a failed build followed by a deploy that emptied the install anyway.
+
+Save it once:
 
 ```bash
-# ---------- BUILD (on the server or any Ubuntu box) ----------
+cat > ~/update-traccar.sh <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+SRC=~/src/traccar
+STAGE=~/traccar-new
+STAMP=$(date +%Y%m%d-%H%M%S)
+
+echo "=== 1/6 update source ==="
+cd "$SRC"
+git checkout -- .gitmodules 2>/dev/null || true
+git checkout master
+git pull --ff-only origin master
+# submodule URL override must live in .gitmodules: `git submodule sync` copies
+# .gitmodules into .git/config and wipes a plain `git config` override
+git config -f .gitmodules submodule.traccar-web.url https://github.com/traccar/traccar-web.git
+git submodule sync --recursive
+git submodule update --init --recursive
+test -f traccar-web/package.json
+
+echo "=== 2/6 build server ==="
+# assemble, not build: `build` runs tests + checkstyle, which fail on this fork
+./gradlew clean assemble --no-daemon
+test -s target/tracker-server.jar
+
+echo "=== 3/6 build web app ==="
+( cd traccar-web && npm ci && npm run build )
+test -s traccar-web/build/index.html
+
+echo "=== 4/6 stage payload ==="
+rm -rf "$STAGE"
+mkdir -p "$STAGE"/{lib,web,schema,templates}
+cp target/tracker-server.jar "$STAGE"/
+cp target/lib/*              "$STAGE"/lib/
+cp -r traccar-web/build/*    "$STAGE"/web/
+cp schema/*                  "$STAGE"/schema/
+cp -r templates/*            "$STAGE"/templates/
+test -s "$STAGE/tracker-server.jar"
+test "$(ls "$STAGE"/lib | wc -l)" -gt 50
+echo "payload ok: $(ls "$STAGE"/lib | wc -l) jars"
+
+echo "=== 5/6 deploy, preserving config ==="
+sudo cp -a /opt/traccar/conf "/root/traccar-conf-$STAMP"
+sudo systemctl stop traccar
+sudo mv /opt/traccar "/opt/traccar.old-$STAMP"
+sudo mkdir -p /opt/traccar
+sudo cp -a "$STAGE"/. /opt/traccar/
+sudo cp -a "/opt/traccar.old-$STAMP/jre" /opt/traccar/jre
+if [ -d "/opt/traccar.old-$STAMP/data" ]; then
+    sudo cp -a "/opt/traccar.old-$STAMP/data" /opt/traccar/data
+fi
+if [ -d "/opt/traccar.old-$STAMP/media" ]; then
+    sudo cp -a "/opt/traccar.old-$STAMP/media" /opt/traccar/media
+fi
+sudo mkdir -p /opt/traccar/logs
+sudo cp -a "/root/traccar-conf-$STAMP" /opt/traccar/conf
+sudo chmod -R go+rX /opt/traccar
+sudo test -s /opt/traccar/tracker-server.jar
+sudo test -s /opt/traccar/conf/traccar.xml
+sudo test -x /opt/traccar/jre/bin/java
+
+echo "=== 6/6 start and verify ==="
+sudo systemctl start traccar
+sleep 25                       # Traccar needs ~10s to run Liquibase and bind 8082
+sudo systemctl is-active traccar || true
+curl -fsS http://localhost:8082/api/health && echo "health ok" || echo "NOT UP - check journalctl -u traccar -n 80"
+curl -sS http://localhost:8082/api/server | head -c 200 || true
+echo
+echo "-----------------------------------------------"
+echo "rollback dir : /opt/traccar.old-$STAMP"
+echo "config backup: /root/traccar-conf-$STAMP"
+echo "rollback     : sudo systemctl stop traccar && sudo rm -rf /opt/traccar && sudo mv /opt/traccar.old-$STAMP /opt/traccar && sudo systemctl start traccar"
+EOF
+chmod +x ~/update-traccar.sh
+```
+
+Then every future update is:
+
+```bash
+~/update-traccar.sh
+```
+
+After it finishes:
+
+```bash
+sudo tail -n 60 /opt/traccar/logs/tracker-server.log
+sudo ss -lntp | grep java | head
+```
+
+Check the web UI and confirm devices are reporting — especially Huabao/MiCODUS
+and Atrack, the fork-modified protocols. Keep the printed rollback directory for
+a few days, then remove it.
+
+### First-time prerequisites only
+
+```bash
 sudo apt update
 sudo apt install -y git unzip zip curl openjdk-21-jdk
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install -y nodejs
-
-mkdir -p ~/src && cd ~/src
-git clone https://github.com/Itheras/nievartraccar.git traccar || true
-cd ~/src/traccar
-git checkout master
-git pull --ff-only origin master
-
-# to take the newest UPSTREAM master instead, run these three lines as well
-# (expect a conflict in src/main/java/org/traccar/protocol/HuabaoProtocolDecoder.java):
-#   git remote add upstream https://github.com/traccar/traccar.git
-#   git fetch upstream master
-#   git merge upstream/master
-
-# web submodule: relative URL points at a fork that does not exist, override it.
-# The override must go in .gitmodules BEFORE sync — `git submodule sync` copies
-# .gitmodules into .git/config and would otherwise wipe a plain `git config` override.
-git config -f .gitmodules submodule.traccar-web.url https://github.com/traccar/traccar-web.git
-git submodule sync --recursive
-git submodule update --init --recursive
-ls traccar-web/package.json          # must exist before npm ci
-
-# `build` runs tests + checkstyle, both of which currently FAIL on this fork's
-# master (AtrackProtocolDecoderTest.testDecodeBeacon, plus 7 checkstyle errors in
-# fork-modified files). `assemble` produces the jar and lib/ without them.
-./gradlew clean assemble --no-daemon --stacktrace
-ls -l target/tracker-server.jar      # must exist before deploying
-
-cd traccar-web && npm ci && npm run build && cd ~/src/traccar
-ls traccar-web/build/index.html      # must exist before deploying
-
-# stage the new install payload
-rm -rf ~/traccar-new ~/traccar-new.tar.gz
-mkdir -p ~/traccar-new/{lib,web,schema,templates}
-cp target/tracker-server.jar ~/traccar-new/
-cp target/lib/*             ~/traccar-new/lib/
-cp -r traccar-web/build/*   ~/traccar-new/web/
-cp schema/*                 ~/traccar-new/schema/
-cp -r templates/*           ~/traccar-new/templates/
-tar czf ~/traccar-new.tar.gz -C ~/traccar-new .
-
-# ---------- DEPLOY ----------
-STAMP=$(date +%Y%m%d-%H%M)
-
-# 1. back up the config
-sudo cp -a /opt/traccar/conf /root/traccar-conf-$STAMP
-sudo ls -la /root/traccar-conf-$STAMP
-
-# 2. stop traccar
-sudo systemctl stop traccar
-sudo systemctl is-active traccar          # expect: inactive
-
-# 3. put the new traccar in place
-sudo mv /opt/traccar /opt/traccar.old-$STAMP
-sudo mkdir -p /opt/traccar
-sudo tar xzf ~/traccar-new.tar.gz -C /opt/traccar
-sudo cp -a /opt/traccar.old-$STAMP/jre /opt/traccar/jre    # keep the bundled Java runtime
-sudo cp -a /opt/traccar.old-$STAMP/data /opt/traccar/data 2>/dev/null || true
-sudo cp -a /opt/traccar.old-$STAMP/media /opt/traccar/media 2>/dev/null || true
-sudo mkdir -p /opt/traccar/logs
-
-# 4. put the config back
-sudo rm -rf /opt/traccar/conf
-sudo cp -a /root/traccar-conf-$STAMP /opt/traccar/conf
-sudo chmod -R go+rX /opt/traccar
-sudo ls -la /opt/traccar /opt/traccar/conf
-
-# 5. start it back up
-sudo systemctl start traccar
-sudo systemctl status traccar --no-pager
-sudo journalctl -u traccar -n 80 --no-pager
-curl -fsS http://localhost:8082/api/health; echo
-curl -sS http://localhost:8082/api/server | head -c 300; echo
-
-# ---------- ROLLBACK if needed ----------
-# sudo systemctl stop traccar
-# sudo rm -rf /opt/traccar && sudo mv /opt/traccar.old-$STAMP /opt/traccar
-# sudo systemctl start traccar
+mkdir -p ~/src && git clone https://github.com/Itheras/nievartraccar.git ~/src/traccar
 ```
 
+If the nodesource script aborts on a broken third-party PPA, remove the offending
+list file (e.g. `sudo rm /etc/apt/sources.list.d/*nginx-mainline*.list`) and rerun
+it. Node 20 also builds the web app.
+
+### Pulling upstream traccar instead of just your fork
+
+Do this by hand before running the script — it can conflict, since this fork
+modifies `HuabaoProtocolDecoder`, `HuabaoProtocolEncoder`, `AtrackProtocolDecoder`,
+`Bit4MotionHandler`, `EngineHoursHandler` and others:
+
+```bash
+cd ~/src/traccar
+git remote add upstream https://github.com/traccar/traccar.git   # once
+git fetch upstream master
+git checkout master
+git merge upstream/master
+git diff --name-only --diff-filter=U      # resolve, keeping both sides
+git add -A && git commit
+git push -u origin master
+~/update-traccar.sh
+```
 ---
 
 ## 0. What is preserved vs. replaced
@@ -258,10 +304,12 @@ Your local additions to re-apply if the merge mangles them:
 
 `.gitmodules` uses a relative URL (`../traccar-web.git`), which resolves to
 `https://github.com/Itheras/traccar-web.git`. That fork does not exist, so the
-submodule must be pointed at upstream:
+submodule must be pointed at upstream. The override has to go into `.gitmodules`
+— `git submodule sync` copies `.gitmodules` into `.git/config`, so a plain
+`git config submodule.traccar-web.url` is wiped before the clone runs:
 
 ```bash
-git config submodule.traccar-web.url https://github.com/traccar/traccar-web.git
+git config -f .gitmodules submodule.traccar-web.url https://github.com/traccar/traccar-web.git
 git submodule sync --recursive
 git submodule update --init --recursive
 git -C traccar-web log --oneline -1
@@ -275,8 +323,9 @@ git -C traccar-web log --oneline -1
 cd ~/src/traccar
 
 # Backend -> target/tracker-server.jar and target/lib/
-./gradlew clean build --no-daemon --stacktrace
-# if a flaky/slow test blocks you: ./gradlew clean build -x test --no-daemon
+# assemble, not build: `build` also runs tests + checkstyle, which currently fail
+# on this fork's master (AtrackProtocolDecoderTest, 7 checkstyle errors)
+./gradlew clean assemble --no-daemon --stacktrace
 
 ls -l target/tracker-server.jar && ls target/lib | wc -l
 
