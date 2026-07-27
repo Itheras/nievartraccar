@@ -75,6 +75,25 @@ public class HuabaoProtocolEncoderTest extends ProtocolTest {
     }
 
     @Test
+    public void testEncodeSetConnectionGosafeModelName() throws Exception {
+
+        var encoder = inject(new HuabaoProtocolEncoder(null));
+        encoder.setModelOverride("Gosafe G717");
+
+        Command command = new Command();
+        command.setDeviceId(1);
+        command.setType(Command.TYPE_SET_CONNECTION);
+        command.set(Command.KEY_SERVER, "bvtelematics.com");
+        command.set(Command.KEY_PORT, 5020);
+        command.set(Command.KEY_DEVICE_PASSWORD, "GSGPS");
+
+        verifyCommand(encoder, command, binary(
+                "7e8304002945678901234500004e00263c535047532a503a"
+                        + "47534750532a513a627674656c656d61746963732e636f6d2c353032303e277e"));
+
+    }
+
+    @Test
     public void testEncodeCustomText() throws Exception {
 
         var encoder = inject(new HuabaoProtocolEncoder(null));

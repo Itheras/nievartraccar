@@ -59,6 +59,15 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
         return Unpooled.wrappedBuffer(DataConverter.parseHex(unique));
     }
 
+    /**
+     * Identifies the devices that take their configuration as a text command. The model is matched the same way as in
+     * the motion handler, because it is a family name that appears alongside a product name and in mixed case.
+     */
+    private boolean isGosafe(long deviceId) {
+        String model = getDeviceModel(deviceId);
+        return model != null && model.toLowerCase().contains("gosafe");
+    }
+
     private record ServerAddress(String host, int port) {
     }
 
@@ -148,7 +157,7 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
                     // An ASCII command is wrapped in a text message, anything else stays a raw hex payload
                     if (content != null && content.startsWith("<")) {
                         return encodeTextMessage(id, content);
-                    } else if ("gosafe".equals(getDeviceModel(command.getDeviceId()))) {
+                    } else if (isGosafe(command.getDeviceId())) {
                         return Unpooled.wrappedBuffer(DataConverter.parseHex(content));
                     } else if ("BSJ".equals(getDeviceModel(command.getDeviceId()))) {
                         data.writeByte(1); // flag
@@ -169,7 +178,7 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
                 case Command.TYPE_SET_CONNECTION:
                     ServerAddress address = splitServer(
                             command.getString(Command.KEY_SERVER), command.getInteger(Command.KEY_PORT));
-                    if ("gosafe".equals(getDeviceModel(command.getDeviceId()))) {
+                    if (isGosafe(command.getDeviceId())) {
                         initDevicePassword(command, "GSGPS");
                         return encodeTextMessage(id, formatServerCommand(
                                 command.getString(Command.KEY_DEVICE_PASSWORD), address.host(), address.port()));

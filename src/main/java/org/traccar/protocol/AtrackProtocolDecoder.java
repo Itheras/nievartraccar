@@ -882,7 +882,7 @@ public class AtrackProtocolDecoder extends BaseProtocolDecoder {
 
             // otherwise parse binary
             String prefix = buf.readCharSequence(2, StandardCharsets.US_ASCII).toString();
-            buf.readUnsignedShort(); 
+            buf.readUnsignedShort();
             int length = buf.readUnsignedShort(); // data length
             int index = buf.readUnsignedShort();  // seq ID
             long id = buf.readLong();             // unit ID
