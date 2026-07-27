@@ -24,6 +24,11 @@ public class HuabaoProtocolDecoderTest extends ProtocolTest {
                 Position.KEY_RESULT, "MD,SET CONFIG OK!");
 
         verifyAttribute(decoder, binary(
+                "7e0304002e013812345678000200014e00293c535047533a303132333435363738392a"
+                        + "513a627674656c656d61746963732e636f6d2c353032303e7a7e"),
+                Position.KEY_RESULT, "<SPGS:0123456789*Q:bvtelematics.com,5020>");
+
+        verifyAttribute(decoder, binary(
                 "7e02000070012040000004019c00000000000004030158df9706c9606b002c000000ab250417170023010400000c5305030000003001153101158202008b530b0101cc00262600000ff1137730017e19f100384d08026e73e0003a4d08037e19e800000000047e3b950000000005409017000000000640a69600000000337e"),
                 "tire1Pressure", 1.4);
 

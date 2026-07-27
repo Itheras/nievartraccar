@@ -73,6 +73,8 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
     public static final int MSG_TRANSPARENT = 0x0900;
     public static final int MSG_PARAMETER_SETTING = 0x0310;
     public static final int MSG_SEND_TEXT_MESSAGE = 0x8300;
+    public static final int MSG_SEND_TEXT_MESSAGE_2 = 0x8304;
+    public static final int MSG_UPLOAD_TEXT_MESSAGE = 0x0304;
     public static final int MSG_REPORT_TEXT_MESSAGE = 0x6006;
     public static final int MSG_CONFIGURATION_PARAMETERS = 0x8103;
     public static final int MSG_COMMAND_RESPONSE = 0x0701;
@@ -303,6 +305,25 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
             Charset charset = Charset.isSupported("GBK") ? Charset.forName("GBK") : StandardCharsets.US_ASCII;
 
             position.set(Position.KEY_RESULT, buf.readCharSequence(buf.readableBytes() - 2, charset).toString());
+
+            return position;
+
+        } else if (type == MSG_UPLOAD_TEXT_MESSAGE) {
+
+            sendGeneralResponse(channel, remoteAddress, id, type, index);
+
+            Position position = new Position(getProtocolName());
+            position.setDeviceId(deviceSession.getDeviceId());
+
+            getLastLocation(position, null);
+
+            buf.readUnsignedShort(); // response serial number
+            int encoding = buf.readUnsignedByte();
+            Charset charset = encoding == 0x4f && Charset.isSupported("GBK")
+                    ? Charset.forName("GBK") : StandardCharsets.US_ASCII;
+            int length = Math.min(buf.readUnsignedShort(), buf.readableBytes() - 2);
+
+            position.set(Position.KEY_RESULT, buf.readCharSequence(length, charset).toString());
 
             return position;
 
