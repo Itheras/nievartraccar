@@ -49,24 +49,28 @@ public class HuabaoFrameDecoder extends BaseFrameDecoder {
 
                 while (buf.readerIndex() <= index) {
                     int b = buf.readUnsignedByte();
-                    if (alternative && (b == 0xe6 || b == 0x3e)) {
-                        int ext = buf.readUnsignedByte();
-                        if (b == 0xe6 && ext == 0x01) {
-                            result.writeByte(0xe6);
-                        } else if (b == 0xe6 && ext == 0x02) {
-                            result.writeByte(0xe7);
-                        } else if (b == 0x3e && ext == 0x01) {
-                            result.writeByte(0x3e);
-                        } else if (b == 0x3e && ext == 0x02) {
-                            result.writeByte(0x3d);
-                        }
-                    } else if (!alternative && b == 0x7d) {
-                        int ext = buf.readUnsignedByte();
-                        if (ext == 0x01) {
-                            result.writeByte(0x7d);
-                        } else if (ext == 0x02) {
-                            result.writeByte(0x7e);
-                        }
+                    // An escape marker is only meaningful while another byte of this frame follows it. Anything that
+                    // is not a recognised escape pair is passed through verbatim, otherwise both the marker and the
+                    // byte behind it would be dropped silently and the payload would come out truncated.
+                    int ext = buf.readerIndex() <= index ? buf.getUnsignedByte(buf.readerIndex()) : -1;
+                    if (alternative && b == 0xe6 && ext == 0x01) {
+                        buf.skipBytes(1);
+                        result.writeByte(0xe6);
+                    } else if (alternative && b == 0xe6 && ext == 0x02) {
+                        buf.skipBytes(1);
+                        result.writeByte(0xe7);
+                    } else if (alternative && b == 0x3e && ext == 0x01) {
+                        buf.skipBytes(1);
+                        result.writeByte(0x3e);
+                    } else if (alternative && b == 0x3e && ext == 0x02) {
+                        buf.skipBytes(1);
+                        result.writeByte(0x3d);
+                    } else if (!alternative && b == 0x7d && ext == 0x01) {
+                        buf.skipBytes(1);
+                        result.writeByte(0x7d);
+                    } else if (!alternative && b == 0x7d && ext == 0x02) {
+                        buf.skipBytes(1);
+                        result.writeByte(0x7e);
                     } else {
                         result.writeByte(b);
                     }

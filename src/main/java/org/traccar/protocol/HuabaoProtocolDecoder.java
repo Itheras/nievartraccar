@@ -79,6 +79,8 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
 
     public static final int RESULT_SUCCESS = 0;
 
+    public static final int MAX_BODY_LENGTH = 0x03ff;
+
     private int delimiter = 0x7e;
 
     public boolean isAlternative() {
@@ -86,10 +88,18 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
     }
 
     public static ByteBuf formatMessage(int delimiter, int type, ByteBuf id, boolean shortIndex, ByteBuf data) {
+        int length = data.readableBytes();
+        if (length > MAX_BODY_LENGTH) {
+            // Only the low ten bits of the properties word hold the length, the bits above it select encryption and
+            // sub-packaging. A longer body would silently spill into those flags and the device would read a
+            // truncated message body, so refuse to build the frame instead.
+            data.release();
+            throw new IllegalArgumentException("Message body of " + length + " bytes exceeds " + MAX_BODY_LENGTH);
+        }
         ByteBuf buf = Unpooled.buffer();
         buf.writeByte(delimiter);
         buf.writeShort(type);
-        buf.writeShort(data.readableBytes());
+        buf.writeShort(length); // body properties, no encryption and no sub-packaging
         buf.writeBytes(id);
         if (shortIndex) {
             buf.writeByte(1);
@@ -208,7 +218,9 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
     // Helper for MiCODUS 0x9F base-station strings: parse decimal or hex numbers
     private static int parseFlexibleInt(String s) {
         s = s.trim();
-        if (s.isEmpty()) return 0;
+        if (s.isEmpty()) {
+            return 0;
+        }
         if (s.matches("(?i).*[a-f].*")) {
             return (int) Long.parseLong(s, 16);
         }
@@ -588,7 +600,9 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
                     int alarmBits = buf.readUnsignedShort();
                     int switchBits = buf.readUnsignedShort();
                     if (BitUtil.check(switchBits, 8) || BitUtil.check(switchBits, 9)) {
-                        position.set(Position.KEY_IGNITION, BitUtil.check(switchBits, 8) && !BitUtil.check(switchBits, 9));
+                        position.set(
+                                Position.KEY_IGNITION,
+                                BitUtil.check(switchBits, 8) && !BitUtil.check(switchBits, 9));
                     }
                     position.addAlarm(BitUtil.check(alarmBits, 8) ? Position.ALARM_ACCELERATION : null);
                     position.addAlarm(BitUtil.check(alarmBits, 9) ? Position.ALARM_BRAKING : null);
@@ -1000,7 +1014,9 @@ public class HuabaoProtocolDecoder extends BaseProtocolDecoder {
                 case 0x82:
                     if (length >= 2) {
                         position.set(Position.KEY_POWER, buf.readUnsignedShort() * 0.1);
-                        if (length > 2) buf.skipBytes(length - 2);
+                        if (length > 2) {
+                            buf.skipBytes(length - 2);
+                        }
                     } else {
                         buf.skipBytes(length);
                     }

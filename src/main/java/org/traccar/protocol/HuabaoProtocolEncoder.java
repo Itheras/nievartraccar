@@ -28,12 +28,64 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.Date;
-import java.util.Set;
 
 public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
 
+    private static final int TERMINAL_ID_LENGTH = 6;
+
     public HuabaoProtocolEncoder(Protocol protocol) {
         super(protocol);
+    }
+
+    /**
+     * Builds the terminal identifier of the message header. The header field has a fixed width, so an identifier that
+     * does not encode to exactly six bytes (seven for the alternative framing) has to be normalised first. Writing it
+     * unchanged would either shift the message body out of the position the device reads it from, or fail outright on
+     * an odd number of hex digits.
+     */
+    private ByteBuf encodeId(long deviceId) {
+        String unique = getUniqueId(deviceId).replaceAll("[^0-9A-Fa-f]", "");
+        if (unique.length() % 2 != 0) {
+            unique = "0" + unique;
+        }
+        int length = unique.length() / 2;
+        if (length != TERMINAL_ID_LENGTH && length != TERMINAL_ID_LENGTH + 1) {
+            if (length > TERMINAL_ID_LENGTH) {
+                unique = unique.substring(unique.length() - TERMINAL_ID_LENGTH * 2);
+            } else {
+                unique = "0".repeat(TERMINAL_ID_LENGTH * 2 - unique.length()) + unique;
+            }
+        }
+        return Unpooled.wrappedBuffer(DataConverter.parseHex(unique));
+    }
+
+    /**
+     * Writes the main server address and TCP port into a configuration parameters body. Unlike the proprietary
+     * parameter setting message, this one identifies every parameter with a four byte id, and the declared value
+     * length has to match the number of bytes actually written or the device stores a truncated address.
+     */
+    private void encodeServerParameters(ByteBuf data, String server, int port) {
+
+        server = server.trim();
+        int separator = server.lastIndexOf(':');
+        if (separator > 0 && server.indexOf(':') == separator
+                && server.substring(separator + 1).matches("\\d{1,5}")) {
+            port = Integer.parseInt(server.substring(separator + 1));
+            server = server.substring(0, separator);
+        }
+
+        byte[] address = server.getBytes(StandardCharsets.US_ASCII);
+        if (address.length == 0 || address.length > 255) {
+            throw new IllegalArgumentException("Invalid server address length: " + address.length);
+        }
+
+        data.writeByte(2); // number of parameters
+        data.writeInt(0x0013); // main server address
+        data.writeByte(address.length); // parameter value length
+        data.writeBytes(address);
+        data.writeInt(0x0018); // server tcp port
+        data.writeByte(4); // parameter value length
+        data.writeInt(port);
     }
 
     @Override
@@ -42,8 +94,7 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
         boolean alternative = AttributeUtil.lookup(
                 getCacheManager(), Keys.PROTOCOL_ALTERNATIVE.withPrefix(getProtocolName()), command.getDeviceId());
 
-        ByteBuf id = Unpooled.wrappedBuffer(
-                DataConverter.parseHex(getUniqueId(command.getDeviceId())));
+        ByteBuf id = encodeId(command.getDeviceId());
         try {
             ByteBuf data = Unpooled.buffer();
             byte[] time = DataConverter.parseHex(new SimpleDateFormat("yyMMddHHmmss").format(new Date()));
@@ -70,6 +121,11 @@ public class HuabaoProtocolEncoder extends BaseProtocolEncoder {
                     data.writeByte(0x03); // restart
                     return HuabaoProtocolDecoder.formatMessage(
                             0x7e, HuabaoProtocolDecoder.MSG_PARAMETER_SETTING, id, false, data);
+                case Command.TYPE_SET_CONNECTION:
+                    encodeServerParameters(
+                            data, command.getString(Command.KEY_SERVER), command.getInteger(Command.KEY_PORT));
+                    return HuabaoProtocolDecoder.formatMessage(
+                            0x7e, HuabaoProtocolDecoder.MSG_CONFIGURATION_PARAMETERS, id, false, data);
                 case Command.TYPE_POSITION_PERIODIC:
                     data.writeByte(1); // number of parameters
                     data.writeByte(0x06); // parameter id
