@@ -59,6 +59,16 @@ public class ComputedAttributesHandler extends BasePositionHandler {
     private final boolean includeDeviceAttributes;
     private final boolean includeLastAttributes;
 
+    private void setContextAttribute(MapContext context, String key, Object value) {
+        context.set(key, value);
+        if (!key.isEmpty() && Character.isLowerCase(key.charAt(0))) {
+            String alias = Character.toUpperCase(key.charAt(0)) + key.substring(1);
+            if (context.get(alias) == null) {
+                context.set(alias, value);
+            }
+        }
+    }
+
     public static class Early extends ComputedAttributesHandler {
         @Inject
         public Early(Config config, CacheManager cacheManager) {
@@ -104,7 +114,7 @@ public class ComputedAttributesHandler extends BasePositionHandler {
             Device device = cacheManager.getObject(Device.class, position.getDeviceId());
             if (device != null) {
                 for (String key : device.getAttributes().keySet()) {
-                    result.set(key, device.getAttributes().get(key));
+                    setContextAttribute(result, key, device.getAttributes().get(key));
                 }
             }
         }
@@ -120,17 +130,18 @@ public class ComputedAttributesHandler extends BasePositionHandler {
 
                 try {
                     if (!method.getReturnType().equals(Map.class)) {
-                        result.set(name, method.invoke(position));
+                        setContextAttribute(result, name, method.invoke(position));
                         if (last != null) {
-                            result.set(prefixAttribute("last", name), method.invoke(last));
+                            setContextAttribute(result, prefixAttribute("last", name), method.invoke(last));
                         }
                     } else {
                         for (Map.Entry<?, ?> entry : ((Map<?, ?>) method.invoke(position)).entrySet()) {
-                            result.set((String) entry.getKey(), entry.getValue());
+                            setContextAttribute(result, (String) entry.getKey(), entry.getValue());
                         }
                         if (last != null) {
                             for (Map.Entry<?, ?> entry : ((Map<?, ?>) method.invoke(last)).entrySet()) {
-                                result.set(prefixAttribute("last", (String) entry.getKey()), entry.getValue());
+                                setContextAttribute(
+                                        result, prefixAttribute("last", (String) entry.getKey()), entry.getValue());
                             }
                         }
                     }
